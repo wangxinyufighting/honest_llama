@@ -13,37 +13,43 @@ import llama
 import pandas as pd
 import warnings
 from einops import rearrange
-from transformers import AutoTokenizer, AutoModelForCausalLM
+from transformers import AutoTokenizer, AutoModelForCausalLM, AutoModel
 from baukit import Trace, TraceDict
 import sklearn
 from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score
 from sklearn.linear_model import LogisticRegression
 import pickle
 from functools import partial
+import spacy
 
-from truthfulqa import utilities, models, metrics
+# from truthfulqa import utilities, models, metrics
 import openai
-from truthfulqa.configs import BEST_COL, ANSWER_COL, INCORRECT_COL
+# from truthfulqa.configs import BEST_COL, ANSWER_COL, INCORRECT_COL
+
+NER_TYPE = ['PERSON', 'DATE', 'ORG', "GPE", "NORP", 'ORDINAL', 'PRODUCT', 'CARDINAL', 'LOC', "FAC", "EVENT", "WORK_OF_ART", "LAW", "LANGUAGE", "TIME", "PERCENT", "MONEY", "QUANTITY"]
+POS_TAG = ["NOUN", "NUM", "PROPN"]
+
+# ENTITY_TOOL = spacy.load("en_core_web_sm")
 
 ENGINE_MAP = {
     'llama_7B': 'baffo32/decapoda-research-llama-7B-hf', 
     'alpaca_7B': 'circulus/alpaca-7b', 
-    'vicuna_7B': 'AlekseyKorshuk/vicuna-7b', 
+    'vicuna_7B': '../model/vicuna-7b', 
     'llama2_chat_7B': 'meta-llama/Llama-2-7b-chat-hf', 
     'llama2_chat_13B': 'meta-llama/Llama-2-13b-chat-hf', 
     'llama2_chat_70B': 'meta-llama/Llama-2-70b-chat-hf', 
 }
 
-from truthfulqa.utilities import (
-    format_prompt,
-    format_prompt_with_answer_strings,
-    split_multi_answer,
-    format_best,
-    find_start,
-)
-from truthfulqa.presets import preset_map, COMPARE_PRIMER
-from truthfulqa.models import find_subsequence, set_columns, MC_calcs
-from truthfulqa.evaluate import format_frame, data_to_dict
+# from truthfulqa.utilities import (
+#     format_prompt,
+#     format_prompt_with_answer_strings,
+#     split_multi_answer,
+#     format_best,
+#     find_start,
+# )
+# from truthfulqa.presets import preset_map, COMPARE_PRIMER
+# from truthfulqa.models import find_subsequence, set_columns, MC_calcs
+# from truthfulqa.evaluate import format_frame, data_to_dict
 
 
 def load_nq():
@@ -68,6 +74,15 @@ def format_truthfulqa(question, choice):
 def format_truthfulqa_end_q(question, choice, rand_question): 
     return f"Q: {question} A: {choice} Q: {rand_question}"
 
+def get_token_index(all_token_ids, target_token_ids_list):
+    all_token_ids = all_token_ids.tolist() 
+    indices = []
+    for target_token_ids in target_token_ids_list:
+        for i in range(len(all_token_ids)):
+            if all_token_ids[i:i+len(target_token_ids)] == target_token_ids:
+                indices.extend(list(range(i,i+len(target_token_ids))))
+
+    return sorted(indices)
 
 def tokenized_tqa(dataset, tokenizer): 
 
@@ -91,6 +106,147 @@ def tokenized_tqa(dataset, tokenizer):
             all_labels.append(label)
     
     return all_prompts, all_labels
+
+def get_entity_token_ids(doc ,tokenizer):
+    target_ids_list = []
+    for sentence in doc.sents:
+        for span_idx, span in enumerate(sentence):
+            pos = span.pos_
+            text = span.text
+            ent_type = span.ent_type_
+            # if pos in POS_TAG or ent_type in NER_TYPE:
+            if ent_type in NER_TYPE:
+                text_tokenized = tokenizer(text)
+                tmp_ids = text_tokenized.input_ids[1:]
+                target_ids_list.append(tmp_ids)
+
+    return target_ids_list
+
+def tokenized_triva_qa_opt(dataset, tokenizer):
+    all_prompts = []
+    all_labels = []
+    all_qid = []
+    for i in range(len(dataset)):
+        qid = dataset[i]['q_id']
+        all_qid.append(qid)
+        question = dataset[i]['question_opt']
+        labels = dataset[i]['label']
+        prompt = tokenizer([question], return_tensors = 'pt').input_ids
+        all_prompts.append(prompt)
+
+        if labels=='correct':
+            all_labels.append(0)
+        elif labels == 'inaccurate':
+            all_labels.append(1)
+        elif labels == 'minor_inaccurate':
+            all_labels.append(2)
+
+    return all_prompts, all_labels, all_qid
+
+def tokenized_triva_qa_v2(dataset, tokenizer):
+    all_prompts = []
+    all_labels = []
+    all_qid = []
+    for i in range(len(dataset)):
+        qid = dataset[i]['q_id']
+        all_qid.append(qid)
+        question = dataset[i]['question']
+        labels = dataset[i]['label']
+        prompt = tokenizer([question], return_tensors = 'pt').input_ids
+        all_prompts.append(prompt)
+
+        if labels=='correct':
+            all_labels.append(0)
+        elif labels == 'inaccurate':
+            all_labels.append(1)
+        elif labels == 'minor_inaccurate':
+            all_labels.append(2)
+
+    return all_prompts, all_labels, all_qid
+
+def tokenized_triva_qa(dataset, tokenizer): 
+
+    all_prompts = []
+    all_entity_ids = []
+    all_labels = []
+    all_qid = []
+    for i in range(len(dataset)):
+        qid = dataset[i]['q_id']
+        all_qid.append(qid)
+        question = dataset[i]['question']
+        doc = ENTITY_TOOL(question)
+        target_ids_list = get_entity_token_ids(doc, tokenizer)
+        all_entity_ids.append(target_ids_list)
+        labels = dataset[i]['label']
+        prompt = tokenizer([question], return_tensors = 'pt').input_ids
+        all_prompts.append(prompt)
+
+        if labels=='correct':
+            all_labels.append(0)
+        elif labels == 'inaccurate':
+            all_labels.append(1)
+        elif labels == 'minor_inaccurate':
+            all_labels.append(2)
+
+    return all_prompts, all_labels, all_qid, all_entity_ids
+
+def tokenized_gsm8k(dataset, tokenizer): 
+
+    all_prompts = []
+    all_labels = []
+    all_qid = []
+
+    for i in range(len(dataset)):
+        qid = dataset[i]['id']
+        question = dataset[i]['prompt']
+        label = dataset[i]['label']
+
+        prompt = tokenizer([question], return_tensors = 'pt').input_ids
+        all_prompts.append(prompt)
+        all_labels.append(int(label))
+        all_qid.append(qid)
+
+    return all_prompts, all_labels, all_qid
+
+
+def tokenized_hotpot_qa(dataset, tokenizer): 
+
+    all_prompts = []
+    all_labels = []
+    all_qid = []
+
+    for i in range(len(dataset)):
+        qid = dataset[i]['id']
+        question = dataset[i]['prompt']
+        label = dataset[i]['label']
+
+        prompt = tokenizer([question], return_tensors = 'pt').input_ids
+        all_prompts.append(prompt)
+        all_qid.append(qid)
+        all_labels.append(int(label))
+
+
+    return all_prompts, all_labels, all_qid
+
+
+def tokenized_hotpot_qa_no_label(dataset, tokenizer): 
+
+    all_prompts = []
+    all_qid = []
+
+    for i in range(len(dataset)):
+        qid = dataset[i]['id']
+        question = dataset[i]['prompt']
+        # label = dataset[i]['label']
+
+        prompt = tokenizer([question], return_tensors = 'pt').input_ids
+        all_prompts.append(prompt)
+        all_qid.append(qid)
+        # all_labels.append(int(label))
+
+
+    return all_prompts, all_qid
+
 
 def tokenized_tqa_gen_end_q(dataset, tokenizer): 
 
@@ -120,6 +276,8 @@ def tokenized_tqa_gen_end_q(dataset, tokenizer):
             all_categories.append(category)
         
     return all_prompts, all_labels, all_categories
+
+
 
 def tokenized_tqa_gen(dataset, tokenizer): 
 
@@ -155,7 +313,7 @@ def get_llama_activations_bau(model, prompt, device):
     MLPS = [f"model.layers.{i}.mlp" for i in range(model.config.num_hidden_layers)]
 
     with torch.no_grad():
-        prompt = prompt.to(device)
+        prompt = prompt.to('cuda')
         with TraceDict(model, HEADS+MLPS) as ret:
             output = model(prompt, output_hidden_states = True)
         hidden_states = output.hidden_states
