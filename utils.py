@@ -197,14 +197,14 @@ def tokenized_gsm8k(dataset, tokenizer):
     all_qid = []
 
     for i in range(len(dataset)):
-        qid = dataset[i]['id']
-        question = dataset[i]['prompt']
-        label = dataset[i]['label']
+        # qid = dataset[i]['id']
+        question = dataset[i]['question']
+        # label = dataset[i]['label']
 
         prompt = tokenizer([question], return_tensors = 'pt').input_ids
         all_prompts.append(prompt)
-        all_labels.append(int(label))
-        all_qid.append(qid)
+        # all_labels.append(int(label))
+        # all_qid.append(qid)
 
     return all_prompts, all_labels, all_qid
 

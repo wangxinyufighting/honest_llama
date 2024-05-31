@@ -16,7 +16,7 @@ HF_NAMES = {
     'alpaca_7B': 'circulus/alpaca-7b', 
     'vicuna_7B': '../model/vicuna-7b', 
     'vicuna_13B': '/root/autodl-tmp/model/vicuna-13b', 
-    'llama2_chat_7B': '/root/autodl-tmp/model/llama2-7b-chat-hf', 
+    'llama2_chat_7B': '/root/autodl-tmp/models/llama2-7b-chat-hf', 
     'llama2_chat_13B': 'meta-llama/Llama-2-13b-chat-hf', 
     'llama2_chat_70B': 'meta-llama/Llama-2-70b-chat-hf', 
 }
@@ -78,7 +78,7 @@ def main():
         formatter = tokenized_triva_qa_v2
     elif 'gsm8k' in args.dataset_name:
         name = args.dataset_name.replace('gsm8k_','')
-        dataset = load_dataset(path='json', data_files=f'/root/autodl-tmp/dataset/gsm8k/v3/label/{name}.json')['train']
+        dataset = load_dataset(path='json', data_files=f'/root/autodl-tmp/dataset/gsm8k/0shot/train_test.json')['train']
         formatter = tokenized_gsm8k
     elif 'hotpot_qa' in args.dataset_name:
         name = args.dataset_name.replace('hotpot_qa_','')
@@ -121,12 +121,7 @@ def main():
 
     for prompt in tqdm(prompts):
         index += 1
-        start = time.time()
         layer_wise_activations, head_wise_activations, _ = get_llama_activations_bau(model, prompt, device)
-        end = time.time()
-        all_time += (end-start)
-        if index in [1, 5, 10, 20, 50, 100, 200, 500, 1000, 2000]:
-            print(f'count:{index}, time:{all_time:.3f}')
         
         all_layer_wise_activations.append(layer_wise_activations[:,-1,:])
         all_head_wise_activations.append(head_wise_activations[:,-1,:])
